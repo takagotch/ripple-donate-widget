@@ -111,27 +111,183 @@ function RippleCheckout(opts) {
   };
   
   function connectToWebSocket(opts) {
-  
+    if ('WebSocket' in window) {
+      
+      var url = opts.sever_url,
+        dst_address = opts.dst_address;
+      
+      var socket = new WebSocket(url),
+        command = JSON.stringify({
+          "command": "subscribe",
+          "accounts": [dst_address],
+        });
+        
+      socket.onopen = function(event) {
+        console.log('WebSocket open');
+        socket.send(command);
+      };
+      
+      socket.onclose = function() {
+       console.log('Websocket closed');
+      };
+      
+      return socket;
+      
+    } else {
+      throw(new Error('ripple-checkout requires WebSockets but they are not supported by this browser'));
+    }
   }
   
   function disconnectFromWebSocket(socket) {
-  
+    socket.close();
   }
   
   function generatePaymentUrl(opts) {
-  
+    
+    var dst_tag = opts.dst_tag,
+      dst_address = opts.dst_address,
+      dst_amount = opts.dst_amount,
+      amount_str;
+      
+    if (typeof dst_amount === 'string') {
+      amount_str = dst_amount;
+    } else {
+      amount_str = dst_amount.value + '/' + dst_amount.currency + (dst_amount.issuer ? '/' + dst_amount.issuer : '');
+    }
+    
+    var url = 'https://ripple.com/client/#/login?tab=send';
+    url += '&to=' + dst_address;
+    url += '&amount=' + amount_str;
+    url += '&dt=' + dst_tag;
+    
+    return url;
   }
   
   function setTransactionListener(socket, opts, callback) {
   
+    socket.onmessage = function(message) {
+      
+      try {
+        var parsed = JSON.parse(message.data),
+          transaction = parsed.transaction;
+      } catch (err) {
+        return;
+      }
+      
+      if (parsed.engine_result !== 'tesSUCCESS') {
+        return;
+      }
+      
+      transaction.meta = parsed.meta;
+      
+      if (transaction.Destination !== opts.dst_address) {
+        return;
+      }
+      
+      if (transaction.DestinationTag !== opts.dst_tag) {
+        return;
+      }
+      
+      var balanceChanged = parseBalanceChanges(transaction, opts.dst_address);
+      
+      for (var b = 0; b < balanceChanges.length; b++) {
+        if (balanceChanges[b].currency !== opts.dst_amount.currency) {
+          continue;
+        }
+        
+        if (opts.dst_amount.issuer && balanceChanges[b].issuer !== opts.dst_amount.issuer) {
+          continue;
+        }
+        
+        if (balanceChanges[b].value < opts.dst_amount.value) {
+          continue;
+        }
+        
+        callback(null, {
+          src_address: transaction.Account,
+          dst_address: transacion.Destination,
+          dst_amount: balanceChanges[b],
+          dst_tag: transaction.DestinationTag,
+          tx_hash: transaction.hash;
+        });
+        return;
+      }
+      
+      callback(new Error('Insufficient amount received.'));
+    
+    };
+  
   }
   
   function parseBalanceChanges (tx, address) {
-  
+    
+    if (typeof tx !== 'object') {
+      throw(new Error('Invalid parameter: tx. Must be a Ripple transaction object'));
+    }
+    
+    if (typeof address !== 'string') {
+      throw(new Error('Invalid parameter: address. Must supply a Ripple address to parse balance changes for'));
+    }
+    
+    var addressBalanceChanges = [];
+    
+    tx.meta.AffectedNodes.forEach(function(affNode){
+    
+      var node = affNode.CreatedNode || affNode.ModifiedNode || affNode.DeleteNode;
+      
+      if (node.LedgerEntryType === 'AccountRoot') {
+      
+        var xrpBalChange = parseAccountRootBalanceChange(node, address);
+        if (xrpBalChange) {
+          addressBalanceChanges.push(xrpBalChange);
+        }
+        
+      }
+      
+      if (node.LedgerEntryType === 'RippleState') {
+      
+        var currBalChange = parseTrustlineBalanceChange(node, address);
+        if (currBalChange) {
+          addressBalanceChanges.push(currBalChange);
+        }
+        
+      }
+      
+    });
+    
+    return addressBalanceChanges;
+    
   }
   
   function parseAccountRootBalanceChange (node, address) {
-  
+    
+    if (node.NewFields) {
+    
+      if (node.NewFields.Account === address) {
+        return {
+          value: dropsToXrp(node.NewFields.Balance);
+          currency: 'XRP',
+          issuer: ''
+        };
+      }
+      
+    } else if (node.FinalFields) {
+      
+      if (node.FinalFields.Account === address) {
+      
+        var finalBal = dropToXrp(node.FinalFields.Balance);
+          prevBal = dropsToXrp(node.PreviousFields.Balance),
+          balChange = BigNumber(finalBal).minus(prevBal).toString();
+          
+        return {
+          value: balChange,
+          currency: 'XRP',
+          issuer: ''
+        };
+      }
+    }
+    
+    return null;
   }
   
   function parseTrustlineBalanceChange (node, address) {
