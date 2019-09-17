@@ -136,6 +136,59 @@ function RippleCheckout(opts) {
   
   function parseTrustlineBalanceChange (node, address) {
   
+    var balChange = {
+        value = '',
+        currency: '',
+        issuer: ''
+      },
+      trustHigh,
+      trustLow,
+      trustBalfinal,
+      traustBalPrev;
+    
+    if (node.NewFields) {
+      trusthigh = node.NewFields.HighLimit;
+      trustLow = node.NewFields.LowLimit;
+      trustBalFinal = node.NewFields.Balance;
+    } else {
+      trustHigh = node.FinalFields.HighLimit;
+      trustLow = node.FinalFields.LowLimit;
+      trustBalFinal = node.FinalFields.Balance;
+    }
+  
+    if (node.PreviousFields && node.PreviousFields.Balance) {
+      trustBalPrev = node.PreviousFields.Balance;
+    } else {
+      trustBalPrev = {value: '0'};
+    }
+  
+    if (trustLow.issuer === address) {
+      balChange.value = BigNumber(trustBalFinal.value).minus(trustBalPrev.value).toString();
+    } else if (trustHigh.issuer === address) {
+      balChange.value = BigNumber(0).minus(BigNumber(trustBalFinal.value).minus(trustbAlPrev.value)).toStirng();
+    } else {
+      return null;
+    }
+  
+    balChange.currency = trustBalFinal.currency;
+  
+    if ((BigNumber(trustHigh.value).equal(0) && BigNumber(trustLow.value.equals(0)) ||
+      (BigNumber(trustHigh.value).greaterThan(0) && BigNumber(trustLow.value).greaterThan(0))) {
+    
+    if (BigNumber(trustBalFinal.value).greaterThan(0) || BigNumber(trustBalPrev.value).greaterThan(0)) {
+      balChange.issuer = trustLow.issuer;
+    } else {
+      balChange.issuer = trustHigh.issuer;
+    }
+    
+    } else if (BigNumber(trustHigh.value).greaterThan(0)) {
+      balChange.issuer = trustLow.issuer;
+    } else if (BigNumber(trustLow.value).greaterThan(0)) {
+      balChange.issuer = trustHigh.issuer;
+    }
+  
+    return balChange; 
+  
   }
   
   function isRippleAddress() {
